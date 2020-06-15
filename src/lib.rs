@@ -36,6 +36,7 @@ struct Reporter {
 impl Reporter {
     #[new]
     fn new() -> PyResult<Reporter> {
+        // Set up the UDP transport
         let socket = UdpSocket::bind(
             &(49152..65535)
                 .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
@@ -43,6 +44,7 @@ impl Reporter {
         )?;
         socket.connect("127.0.0.1:6831")?;
 
+        // We never read anything so this can be a no-op input protocol
         let input_protocol = TCompactInputProtocol::new(empty());
         let output_protocol =
             TCompactOutputProtocol::new(TBufferedWriteTransport::new(ConnectedUdp { socket }));
@@ -51,6 +53,7 @@ impl Reporter {
             output_protocol,
         ));
 
+        // We want to do the actual sending in a separate thread.
         let (span_sender, span_receiver) = channel();
         let (process_sender, process_receiver) = channel();
 
@@ -61,14 +64,21 @@ impl Reporter {
                 let mut process = None;
 
                 loop {
+                    // Wait for new span to be queud.
                     if let Ok(span) = span_receiver.recv() {
                         queue.push(span);
                     }
 
-                    if let Ok(new_process) = process_receiver.try_recv() {
+                    // Check if we have been given any new process information
+                    // since the last loop.
+                    while let Ok(new_process) = process_receiver.try_recv() {
                         process = Some(new_process);
                     }
 
+                    // We batch up the spans before sending them.
+                    //
+                    // TODO: We should ensure we send the spans within a time
+                    // frame even if we don't reach the limit.
                     if queue.len() > 10 {
                         if let Some(process) = process.clone() {
                             let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
@@ -246,6 +256,9 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Process {
 
 impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
     fn extract(ob: &'a PyAny) -> PyResult<Self> {
+        // Annoyingly the jaeger client gives us its own version of Span, rather
+        // than the swift version.
+        //
         // This is all a bunch of nonesense we've copied from the
         // `jaeger-client` to support large ints.
 
@@ -261,13 +274,38 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
         let trace_id_high = (trace_id & ((1 << 64) - 1)) as i64;
         let trace_id_low = ((trace_id >> 64) & ((1 << 64) - 1)) as i64;
 
+        let references = match ob.extract_attribute::<Option<Vec<&PyAny>>>("references")? {
+            Some(refs) => {
+                let mut encoded_references = Vec::with_capacity(refs.len());
+
+                for reference in refs {
+                    let context = ob.getattr("referenced_context")?;
+                    let trace_id: u128 = context.extract_attribute("trace_id")?;
+                    encoded_references.push(thrift_gen::jaeger::SpanRef {
+                        ref_type: reference.extract_attribute("type")?,
+                        trace_id_low: ((trace_id >> 64) & ((1 << 64) - 1)) as i64,
+                        trace_id_high: (trace_id & ((1 << 64) - 1)) as i64,
+                        span_id: context.extract_attribute::<u64>("span_id")? as i64,
+                    });
+                }
+
+                if !encoded_references.is_empty() {
+                    Some(encoded_references)
+                } else{
+                    None
+                }
+
+            }
+            None => None,
+        };
+
         let span = thrift_gen::jaeger::Span {
             trace_id_low,
             trace_id_high,
             span_id: span_id as i64, // These converstion from u64 -> i64 do the correct overflow.
             parent_span_id: parent_span_id as i64,
             operation_name: ob.extract_attribute("operation_name")?,
-            references: ob.extract_attribute("references")?,
+            references: references,
             flags,
             start_time: (start_time * 1000000f64) as i64,
             duration: ((end_time - start_time) * 1000000f64) as i64,
@@ -310,7 +348,7 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Tag {
             v_double: ob
                 .getattr("vDouble")?
                 .extract::<Option<f64>>()?
-                .map(OrderedFloat::from),
+                .map(OrderedFloat),
             v_bool: ob.getattr("vBool")?.extract()?,
             v_long: ob.getattr("vLong")?.extract()?,
             v_binary: ob.getattr("vBinary")?.extract()?,

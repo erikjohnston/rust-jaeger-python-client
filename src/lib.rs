@@ -279,10 +279,13 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
                 let mut encoded_references = Vec::with_capacity(refs.len());
 
                 for reference in refs {
-                    let context = ob.getattr("referenced_context")?;
+                    let context = reference.getattr("referenced_context")?;
                     let trace_id: u128 = context.extract_attribute("trace_id")?;
                     encoded_references.push(thrift_gen::jaeger::SpanRef {
-                        ref_type: reference.extract_attribute("type")?,
+                        ref_type: match reference.extract_attribute("type")? {
+                            "FOLLOWS_FROM" => thrift_gen::jaeger::SpanRefType::FollowsFrom,
+                            _ => thrift_gen::jaeger::SpanRefType::ChildOf,
+                        },
                         trace_id_low: ((trace_id >> 64) & ((1 << 64) - 1)) as i64,
                         trace_id_high: (trace_id & ((1 << 64) - 1)) as i64,
                         span_id: context.extract_attribute::<u64>("span_id")? as i64,
@@ -298,6 +301,7 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
             }
             None => None,
         };
+
 
         let span = thrift_gen::jaeger::Span {
             trace_id_low,

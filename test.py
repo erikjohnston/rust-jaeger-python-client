@@ -35,5 +35,5 @@ if __name__ == "__main__":
             span.set_tag("test_double", 1.25)
             span.set_tag("test_bool", True)
 
-            with tracer.start_span('TestSpan2', child_of=span) as span2:
+            with tracer.start_span('ChildSpan', references=opentracing.follows_from(span.context),) as span2:
                 pass

@@ -6,7 +6,7 @@ Rust Jaeger Python Client
 
 A faster reporter for the python [`jaeger-client`](https://pypi.org/project/jaeger-client/) that reports spans in a native background thread.
 
-This is relatively untested, so use at your own risk!
+This is relatively untested, so use at your own risk! (You may want to manually wrap this class in python so that calls to `report_span` cannot fail).
 
 Usage:
 

@@ -3,7 +3,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 use pyo3::PyDowncastError;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
-use thrift::transport::TBufferedWriteTransport;
 use try_from::TryFrom;
 
 use std::io::empty;
@@ -47,7 +46,7 @@ impl Reporter {
         // We never read anything so this can be a no-op input protocol
         let input_protocol = TCompactInputProtocol::new(empty());
         let output_protocol =
-            TCompactOutputProtocol::new(TBufferedWriteTransport::new(ConnectedUdp { socket }));
+            TCompactOutputProtocol::new(TBufferedTransport::new(ConnectedUdp { socket }));
         let mut agent = Box::new(thrift_gen::agent::AgentSyncClient::new(
             input_protocol,
             output_protocol,
@@ -141,6 +140,11 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
                 v_binary: None,
             });
         } else if let Ok(val) = value.extract::<String>() {
+            // The python client truncates strings, presumably so that things
+            // fit in a UDP packet.
+            let mut string: String = value.str()?.to_string()?.to_string();
+            string.truncate(1024);
+
             tags.push(thrift_gen::jaeger::Tag {
                 key: key_str,
                 v_type: thrift_gen::jaeger::TagType::String,
@@ -174,22 +178,29 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
             let formatted_traceback =
                 PyString::new(py, "").call_method1("join", (value.call_method0("format")?,))?;
 
+            // The python client truncates strings, presumably so that things
+            // fit in a UDP packet.
+            let mut string: String = formatted_traceback.extract()?;
+            string.truncate(4096);
+
             tags.push(thrift_gen::jaeger::Tag {
                 key: key_str,
                 v_type: thrift_gen::jaeger::TagType::String,
-                v_str: Some(formatted_traceback.extract()?),
+                v_str: Some(string),
                 v_double: None,
                 v_bool: None,
                 v_long: None,
                 v_binary: None,
             });
         } else {
-            // Default to just
+            // Default to just a stringified version.
+            let mut string: String = value.str()?.to_string()?.to_string();
+            string.truncate(1024);
 
             tags.push(thrift_gen::jaeger::Tag {
                 key: key_str,
                 v_type: thrift_gen::jaeger::TagType::String,
-                v_str: Some(value.str()?.to_string()?.to_string()),
+                v_str: Some(string),
                 v_double: None,
                 v_bool: None,
                 v_long: None,
@@ -294,14 +305,12 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
 
                 if !encoded_references.is_empty() {
                     Some(encoded_references)
-                } else{
+                } else {
                     None
                 }
-
             }
             None => None,
         };
-
 
         let span = thrift_gen::jaeger::Span {
             trace_id_low,
@@ -377,5 +386,55 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Log {
         };
 
         Ok(span)
+    }
+}
+
+/// A Transport that buffers writes up until `flush()` is called, then will
+/// attempt to write the full buffer down the channel at once.
+#[derive(Debug)]
+pub struct TBufferedTransport<C>
+where
+    C: Write,
+{
+    buf: Vec<u8>,
+    channel: C,
+}
+
+impl<C> TBufferedTransport<C>
+where
+    C: Write,
+{
+    pub fn new(channel: C) -> TBufferedTransport<C> {
+        TBufferedTransport::with_capacity(4096, channel)
+    }
+
+    pub fn with_capacity(write_capacity: usize, channel: C) -> TBufferedTransport<C> {
+        TBufferedTransport {
+            buf: Vec::with_capacity(write_capacity),
+            channel,
+        }
+    }
+}
+
+impl<C> Write for TBufferedTransport<C>
+where
+    C: Write,
+{
+    fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+        self.buf.extend_from_slice(b);
+        Ok(b.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Technically a write may not write all the buffer and returns how many
+        // bytes were actually written. If that happens here then it means we've
+        // (probably) sent out a truncated UDP packet, and we don't want to send
+        // out the other half of the buffer as a separate packet.
+        self.channel.write(&self.buf)?;
+
+        self.buf.resize(4096, 0);
+        self.buf.clear();
+
+        self.channel.flush()
     }
 }

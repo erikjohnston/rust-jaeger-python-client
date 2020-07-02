@@ -1,3 +1,4 @@
+use crossbeam_channel::{bounded, Sender};
 use ordered_float::OrderedFloat;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -9,7 +10,7 @@ use std::io::empty;
 use std::io::{self, Write};
 use std::mem;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::mpsc::{channel, Sender};
+use std::time::{Duration, Instant};
 
 mod thrift_gen;
 
@@ -52,9 +53,11 @@ impl Reporter {
             output_protocol,
         ));
 
-        // We want to do the actual sending in a separate thread.
-        let (span_sender, span_receiver) = channel();
-        let (process_sender, process_receiver) = channel();
+        // We want to do the actual sending in a separate thread. We add bounds
+        // here to ensure we don't stack these up infinitely if something goes
+        // wrong.
+        let (span_sender, span_receiver) = bounded(1000);
+        let (process_sender, process_receiver) = bounded(1000);
 
         std::thread::Builder::new()
             .name("jaeger_sender".to_string())
@@ -107,9 +110,11 @@ impl Reporter {
     ) -> PyResult<()> {
         let tags = make_tags(self_.py(), tags)?;
 
+        // This may fail if the queue is full. We should probably log something
+        // somehow?
         self_
             .process_sender
-            .send(thrift_gen::jaeger::Process::new(service_name, tags))
+            .try_send(thrift_gen::jaeger::Process::new(service_name, tags))
             .ok();
 
         Ok(())
@@ -118,7 +123,9 @@ impl Reporter {
     /// Queue a span to be reported to local jaeger agent.
     #[text_signature = "($self, span, /)"]
     fn report_span(self_: PyRef<Self>, span: thrift_gen::jaeger::Span) {
-        self_.span_sender.send(span).ok();
+        // This may fail if the queue is full. We should probably log something
+        // somehow?
+        self_.span_sender.try_send(span).ok();
     }
 }
 
@@ -318,7 +325,7 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
             span_id: span_id as i64, // These converstion from u64 -> i64 do the correct overflow.
             parent_span_id: parent_span_id as i64,
             operation_name: ob.extract_attribute("operation_name")?,
-            references: references,
+            references,
             flags,
             start_time: (start_time * 1000000f64) as i64,
             duration: ((end_time - start_time) * 1000000f64) as i64,
@@ -421,6 +428,12 @@ where
     C: Write,
 {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+        // We want to make sure the queue doesn't become huge, so we silently
+        // drop updates if the buffer is already over
+        if self.buf.len() > 100 * 1024 {
+            return Ok(b.len());
+        }
+
         self.buf.extend_from_slice(b);
         Ok(b.len())
     }
@@ -430,10 +443,13 @@ where
         // bytes were actually written. If that happens here then it means we've
         // (probably) sent out a truncated UDP packet, and we don't want to send
         // out the other half of the buffer as a separate packet.
-        self.channel.write(&self.buf)?;
+        let _ = self.channel.write(&self.buf)?;
 
-        self.buf.resize(4096, 0);
-        self.buf.clear();
+        // We shrink the capacity of the vector if it gets "big"
+        if self.buf.capacity() > 4096 {
+            self.buf.clear();
+            self.buf.shrink_to_fit();
+        }
 
         self.channel.flush()
     }

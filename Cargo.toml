@@ -23,6 +23,7 @@ classifier = [
 ordered-float = "1.0.2"
 thrift = "0.13.0"
 try_from = "0.3.2"
+crossbeam-channel = "0.4.2"
 
 [dependencies.pyo3]
 version = "0.10.1"

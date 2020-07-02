@@ -65,9 +65,11 @@ impl Reporter {
                 let mut queue = Vec::with_capacity(100);
                 let mut process = None;
 
+                let mut last_push = Instant::now();
+
                 loop {
                     // Wait for new span to be queud.
-                    if let Ok(span) = span_receiver.recv() {
+                    if let Ok(span) = span_receiver.recv_timeout(Duration::from_secs(5)) {
                         queue.push(span);
                     }
 
@@ -77,11 +79,12 @@ impl Reporter {
                         process = Some(new_process);
                     }
 
-                    // We batch up the spans before sending them.
-                    //
-                    // TODO: We should ensure we send the spans within a time
-                    // frame even if we don't reach the limit.
-                    if queue.len() > 10 {
+                    // We batch up the spans before sending them, waiting at
+                    // most N seconds between sends
+                    if queue.len() > 50 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
+                    {
+                        last_push = Instant::now();
+
                         if let Some(process) = process.clone() {
                             let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
                             agent

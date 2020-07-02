@@ -51,3 +51,14 @@ Building
 Requires a nightly rust compiler, due to using the PyO3 library.
 [Maturin](https://github.com/PyO3/maturin) can be used to develop, test and
 publish the library.
+
+
+Publishing to PyPI
+------------------
+
+As per the [maturin docs](https://github.com/PyO3/maturin#manylinux-and-auditwheel)
+we use a docker image to build the binary wheels for the various python versions:
+
+```
+docker run -it --rm -v $(pwd):/io konstin2/maturin publish
+```

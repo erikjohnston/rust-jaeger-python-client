@@ -1,4 +1,5 @@
 use crossbeam_channel::{bounded, Sender};
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
@@ -6,11 +7,18 @@ use pyo3::PyDowncastError;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use try_from::TryFrom;
 
-use std::io::empty;
 use std::io::{self, Write};
 use std::mem;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
+use std::{
+    io::empty,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    usize,
+};
 
 mod thrift_gen;
 
@@ -24,12 +32,32 @@ fn rust_python_jaeger_reporter(_py: Python, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
+#[pyclass]
+struct Stats {
+    #[pyo3(get)]
+    queue_size: usize,
+    #[pyo3(get)]
+    sent_batches: usize,
+    #[pyo3(get)]
+    sent_batches_errors: usize,
+    #[pyo3(get)]
+    span_sender_size: usize,
+    #[pyo3(get)]
+    process_sender_size: usize,
+    #[pyo3(get)]
+    last_error: Option<String>,
+}
+
 /// The main reporter class.
 #[pyclass]
 #[text_signature = "()"]
 struct Reporter {
     span_sender: Sender<thrift_gen::jaeger::Span>,
     process_sender: Sender<thrift_gen::jaeger::Process>,
+    queue_size: Arc<AtomicUsize>,
+    sent_batches: Arc<AtomicUsize>,
+    sent_batches_errors: Arc<AtomicUsize>,
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 #[pymethods]
@@ -57,7 +85,17 @@ impl Reporter {
         // here to ensure we don't stack these up infinitely if something goes
         // wrong.
         let (span_sender, span_receiver) = bounded(1000);
-        let (process_sender, process_receiver) = bounded(1000);
+        let (process_sender, process_receiver) = bounded::<thrift_gen::jaeger::Process>(1000);
+
+        let queue_size = Arc::new(AtomicUsize::new(0));
+        let sent_batches = Arc::new(AtomicUsize::new(0));
+        let sent_batches_errors = Arc::new(AtomicUsize::new(0));
+        let last_error = Arc::new(Mutex::new(None));
+
+        let queue_size_thread = queue_size.clone();
+        let sent_batches_thread = sent_batches.clone();
+        let sent_batches_errors_thread = sent_batches_errors.clone();
+        let last_error_thread = last_error.clone();
 
         std::thread::Builder::new()
             .name("jaeger_sender".to_string())
@@ -73,6 +111,8 @@ impl Reporter {
                         queue.push(span);
                     }
 
+                    queue_size_thread.store(queue.len(), Ordering::Relaxed);
+
                     // Check if we have been given any new process information
                     // since the last loop.
                     while let Ok(new_process) = process_receiver.try_recv() {
@@ -81,15 +121,26 @@ impl Reporter {
 
                     // We batch up the spans before sending them, waiting at
                     // most N seconds between sends
-                    if queue.len() > 50 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
+                    if queue.len() > 20 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
                     {
                         last_push = Instant::now();
 
                         if let Some(process) = process.clone() {
                             let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
-                            agent
-                                .emit_batch(thrift_gen::jaeger::Batch::new(process, to_send))
-                                .ok();
+                            for chunk in to_send.into_iter().chunks(20).into_iter() {
+                                let result = agent.emit_batch(thrift_gen::jaeger::Batch::new(
+                                    process.clone(),
+                                    chunk.collect(),
+                                ));
+
+                                sent_batches_thread.fetch_add(1, Ordering::Relaxed);
+
+                                if let Err(err) = result {
+                                    sent_batches_errors_thread.fetch_add(1, Ordering::Relaxed);
+                                    *last_error_thread.lock().expect("poisoned") =
+                                        Some(err.to_string());
+                                }
+                            }
                         }
                     }
                 }
@@ -97,8 +148,12 @@ impl Reporter {
             .unwrap();
 
         Ok(Reporter {
-            process_sender,
             span_sender,
+            process_sender,
+            queue_size,
+            sent_batches,
+            sent_batches_errors,
+            last_error,
         })
     }
 
@@ -130,6 +185,24 @@ impl Reporter {
         // somehow?
         self_.span_sender.try_send(span).ok();
     }
+
+    fn get_stats(&self) -> Stats {
+        let queue_size = self.queue_size.load(Ordering::Relaxed);
+        let sent_batches = self.sent_batches.load(Ordering::Relaxed);
+        let sent_batches_errors = self.sent_batches_errors.load(Ordering::Relaxed);
+        let span_sender_size = self.span_sender.len();
+        let process_sender_size = self.process_sender.len();
+        let last_error = self.last_error.lock().expect("poisoned").as_ref().cloned();
+
+        Stats {
+            queue_size,
+            sent_batches,
+            sent_batches_errors,
+            span_sender_size,
+            process_sender_size,
+            last_error,
+        }
+    }
 }
 
 /// This is taken from the python jaeger-client class. This is only used by
@@ -138,7 +211,7 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
     let mut tags = Vec::new();
 
     for (key, value) in dict.iter() {
-        let key_str = key.str()?.to_string()?.to_string();
+        let key_str = key.str()?.to_string();
         if let Ok(val) = value.extract::<bool>() {
             tags.push(thrift_gen::jaeger::Tag {
                 key: key_str,
@@ -152,7 +225,7 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
         } else if let Ok(val) = value.extract::<String>() {
             // The python client truncates strings, presumably so that things
             // fit in a UDP packet.
-            let mut string: String = value.str()?.to_string()?.to_string();
+            let mut string: String = value.str()?.to_string();
             string.truncate(1024);
 
             tags.push(thrift_gen::jaeger::Tag {
@@ -184,7 +257,7 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
                 v_long: Some(val),
                 v_binary: None,
             });
-        } else if value.get_type().name() == "traceback" {
+        } else if value.get_type().name()? == "traceback" {
             let formatted_traceback =
                 PyString::new(py, "").call_method1("join", (value.call_method0("format")?,))?;
 
@@ -204,7 +277,7 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
             });
         } else {
             // Default to just a stringified version.
-            let mut string: String = value.str()?.to_string()?.to_string();
+            let mut string: String = value.str()?.to_string();
             string.truncate(1024);
 
             tags.push(thrift_gen::jaeger::Tag {
@@ -237,7 +310,7 @@ impl ExtractAttribute for &PyAny {
         D: FromPyObject<'a>,
     {
         FromPyObject::extract(self.getattr(attriubte)?).map_err(|err| {
-            PyErr::new::<pyo3::exceptions::TypeError, _>((
+            PyErr::new::<pyo3::exceptions::PyTypeError, _>((
                 format!("Failed to extract attribute '{}'", attriubte),
                 err,
             ))
@@ -357,7 +430,7 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::SpanRefType {
     fn extract(ob: &'a PyAny) -> PyResult<Self> {
         Ok(
             thrift_gen::jaeger::SpanRefType::try_from(ob.extract::<i32>()?)
-                .map_err(|_| PyDowncastError)?,
+                .map_err(|_| PyDowncastError::new(ob, "jaeger::SpanRefType"))?,
         )
     }
 }
@@ -384,7 +457,7 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Tag {
 impl<'a> FromPyObject<'a> for thrift_gen::jaeger::TagType {
     fn extract(ob: &'a PyAny) -> PyResult<Self> {
         Ok(thrift_gen::jaeger::TagType::try_from(ob.extract::<i32>()?)
-            .map_err(|_| PyDowncastError)?)
+            .map_err(|_| PyDowncastError::new(ob, "jaeger::TagType"))?)
     }
 }
 

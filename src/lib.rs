@@ -138,10 +138,14 @@ impl Reporter {
 
                     // We batch up the spans before sending them, waiting at
                     // most N seconds between sends
-                    if queue.len() >= 20 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
+                    if queue.len() >= 20
+                        || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
                     {
                         last_push = Instant::now();
-                        let to_send = mem::replace(&mut queue, Vec::<thrift_gen::jaeger::Span>::with_capacity(100));
+                        let to_send = mem::replace(
+                            &mut queue,
+                            Vec::<thrift_gen::jaeger::Span>::with_capacity(100),
+                        );
 
                         if let Some(process) = process.clone() {
                             for chunk in to_send.into_iter().chunks(20).into_iter() {

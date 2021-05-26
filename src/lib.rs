@@ -397,8 +397,8 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
         let start_time: f64 = ob.extract_attribute("start_time")?;
         let end_time: f64 = ob.extract_attribute("end_time")?;
 
-        let trace_id_high = (trace_id & ((1 << 64) - 1)) as i64;
-        let trace_id_low = ((trace_id >> 64) & ((1 << 64) - 1)) as i64;
+        let trace_id_low = (trace_id & ((1 << 64) - 1)) as i64;
+        let trace_id_high = ((trace_id >> 64) & ((1 << 64) - 1)) as i64;
 
         let references = match ob.extract_attribute::<Option<Vec<&PyAny>>>("references")? {
             Some(refs) => {

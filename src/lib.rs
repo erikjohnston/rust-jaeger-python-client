@@ -1,9 +1,9 @@
 use crossbeam_channel::{bounded, Sender};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
-use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 use pyo3::PyDowncastError;
+use pyo3::{prelude::*, PyObjectProtocol};
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use try_from::TryFrom;
 
@@ -24,15 +24,21 @@ mod thrift_gen;
 
 use crate::thrift_gen::agent::TAgentSyncClient;
 
+static CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[pymodule]
 /// The root Python module.
 fn rust_python_jaeger_reporter(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Reporter>()?;
+    m.add_class::<Stats>()?;
+
+    m.add("__version__", CARGO_VERSION)?;
 
     Ok(())
 }
 
 #[pyclass]
+#[derive(Debug)]
 struct Stats {
     #[pyo3(get)]
     queue_size: usize,
@@ -46,6 +52,17 @@ struct Stats {
     process_sender_size: usize,
     #[pyo3(get)]
     last_error: Option<String>,
+}
+
+#[pyproto]
+impl PyObjectProtocol for Stats {
+    fn __str__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 
 /// The main reporter class.
@@ -124,9 +141,9 @@ impl Reporter {
                     if queue.len() > 20 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
                     {
                         last_push = Instant::now();
+                        let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
 
                         if let Some(process) = process.clone() {
-                            let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
                             for chunk in to_send.into_iter().chunks(20).into_iter() {
                                 let result = agent.emit_batch(thrift_gen::jaeger::Batch::new(
                                     process.clone(),
@@ -180,12 +197,23 @@ impl Reporter {
 
     /// Queue a span to be reported to local jaeger agent.
     #[text_signature = "($self, span, /)"]
-    fn report_span(self_: PyRef<Self>, span: thrift_gen::jaeger::Span) {
+    fn report_span(&self, py: Python, py_span: Py<PyAny>) -> PyResult<()> {
         // This may fail if the queue is full. We should probably log something
         // somehow?
-        self_.span_sender.try_send(span).ok();
+
+        let span: thrift_gen::jaeger::Span = {
+            let pool = unsafe { py.new_pool() };
+            let py = pool.python();
+
+            py_span.extract(py)?
+        };
+
+        self.span_sender.try_send(span).ok();
+
+        Ok(())
     }
 
+    #[text_signature = "($self, /)"]
     fn get_stats(&self) -> Stats {
         let queue_size = self.queue_size.load(Ordering::Relaxed);
         let sent_batches = self.sent_batches.load(Ordering::Relaxed);
@@ -337,8 +365,8 @@ impl Write for ConnectedUdp {
 // Here follows a bunch of implementations to convert the thrift python objects
 // to their rust counterparts.
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Process {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::Process {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         let span = thrift_gen::jaeger::Process {
             service_name: ob.getattr("serviceName")?.extract()?,
             tags: ob.getattr("tags")?.extract()?,
@@ -348,8 +376,8 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Process {
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::Span {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         // Annoyingly the jaeger client gives us its own version of Span, rather
         // than the swift version.
         //
@@ -413,8 +441,8 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Span {
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::SpanRef {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::SpanRef {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         let span = thrift_gen::jaeger::SpanRef {
             ref_type: ob.getattr("refType")?.extract()?,
             trace_id_low: ob.getattr("traceIdLow")?.extract()?,
@@ -426,8 +454,8 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::SpanRef {
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::SpanRefType {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::SpanRefType {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         Ok(
             thrift_gen::jaeger::SpanRefType::try_from(ob.extract::<i32>()?)
                 .map_err(|_| PyDowncastError::new(ob, "jaeger::SpanRefType"))?,
@@ -435,8 +463,8 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::SpanRefType {
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Tag {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::Tag {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         let span = thrift_gen::jaeger::Tag {
             key: ob.getattr("key")?.extract()?,
             v_type: ob.getattr("vType")?.extract()?,
@@ -454,15 +482,15 @@ impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Tag {
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::TagType {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::TagType {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         Ok(thrift_gen::jaeger::TagType::try_from(ob.extract::<i32>()?)
             .map_err(|_| PyDowncastError::new(ob, "jaeger::TagType"))?)
     }
 }
 
-impl<'a> FromPyObject<'a> for thrift_gen::jaeger::Log {
-    fn extract(ob: &'a PyAny) -> PyResult<Self> {
+impl FromPyObject<'_> for thrift_gen::jaeger::Log {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         let span = thrift_gen::jaeger::Log {
             timestamp: ob.getattr("timestamp")?.extract()?,
             fields: ob.getattr("fields")?.extract()?,
@@ -519,7 +547,10 @@ where
         // bytes were actually written. If that happens here then it means we've
         // (probably) sent out a truncated UDP packet, and we don't want to send
         // out the other half of the buffer as a separate packet.
-        let _ = self.channel.write(&self.buf)?;
+        //
+        // Similarly, we still want to drop the buffer and flush even if we get
+        // an error.
+        let write_result = self.channel.write(&self.buf);
 
         // We shrink the capacity of the vector if it gets "big"
         if self.buf.capacity() > 4096 {
@@ -527,6 +558,12 @@ where
             self.buf.shrink_to_fit();
         }
 
-        self.channel.flush()
+        let flush_result = self.channel.flush();
+
+        // If `write` or `flush` failed we return the error now.
+        write_result?;
+        flush_result?;
+
+        Ok(())
     }
 }

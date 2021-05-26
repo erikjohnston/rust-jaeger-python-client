@@ -1,6 +1,6 @@
 [package]
 name = "rust-python-jaeger-reporter"
-version = "0.1.16"
+version = "0.1.17"
 authors = ["Erik Johnston <erik@matrix.org>"]
 edition = "2018"
 description = "A faster reporter for the python `jaeger-client` that reports spans in a native background thread."
@@ -29,3 +29,10 @@ itertools = "0.10.0"
 [dependencies.pyo3]
 version = "0.13.2"
 features = ["extension-module"]
+
+# There's a memory leak in v0.13.2 when using u128's
+[patch.crates-io]
+pyo3 = { git = 'https://github.com/erikjohnston/pyo3' }
+
+[profile.release]
+debug = true

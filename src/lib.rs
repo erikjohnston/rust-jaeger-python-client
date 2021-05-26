@@ -101,7 +101,7 @@ impl Reporter {
         // We want to do the actual sending in a separate thread. We add bounds
         // here to ensure we don't stack these up infinitely if something goes
         // wrong.
-        let (span_sender, span_receiver) = bounded(1000);
+        let (span_sender, span_receiver) = bounded::<thrift_gen::jaeger::Span>(1000);
         let (process_sender, process_receiver) = bounded::<thrift_gen::jaeger::Process>(1000);
 
         let queue_size = Arc::new(AtomicUsize::new(0));
@@ -117,7 +117,7 @@ impl Reporter {
         std::thread::Builder::new()
             .name("jaeger_sender".to_string())
             .spawn(move || {
-                let mut queue = Vec::with_capacity(100);
+                let mut queue = Vec::<thrift_gen::jaeger::Span>::with_capacity(100);
                 let mut process = None;
 
                 let mut last_push = Instant::now();
@@ -138,10 +138,10 @@ impl Reporter {
 
                     // We batch up the spans before sending them, waiting at
                     // most N seconds between sends
-                    if queue.len() > 20 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
+                    if queue.len() >= 20 || (!queue.is_empty() && last_push.elapsed().as_secs() > 20)
                     {
                         last_push = Instant::now();
-                        let to_send = mem::replace(&mut queue, Vec::with_capacity(100));
+                        let to_send = mem::replace(&mut queue, Vec::<thrift_gen::jaeger::Span>::with_capacity(100));
 
                         if let Some(process) = process.clone() {
                             for chunk in to_send.into_iter().chunks(20).into_iter() {

@@ -552,9 +552,10 @@ where
         // an error.
         let write_result = self.channel.write(&self.buf);
 
+        self.buf.clear();
+
         // We shrink the capacity of the vector if it gets "big"
         if self.buf.capacity() > 4096 {
-            self.buf.clear();
             self.buf.shrink_to_fit();
         }
 
@@ -565,5 +566,64 @@ where
         flush_result?;
 
         Ok(())
+    }
+}
+
+#[cfg(tests)]
+mod tests {
+    use super::*;
+
+    /// Test that TBufferedTransport functions when calling write/flush correctly.
+    #[test]
+    fn test_buffered_transport_simple() {
+        let mut buf = Vec::new();
+
+        {
+            let mut buffered_transport = TBufferedTransport::new(Cursor::new(&mut buf));
+
+            buffered_transport.write_all(b"He").unwrap();
+            buffered_transport.write_all(b"llo").unwrap();
+            buffered_transport.flush().unwrap();
+        }
+
+        assert_eq!(b"Hello", &*buf);
+    }
+
+    /// Test that TBufferedTransport doesn't duplicate data on repeated calls.
+    #[test]
+    fn test_buffered_transport_no_duplicate() {
+        let mut buf = Vec::new();
+
+        {
+            let mut buffered_transport = TBufferedTransport::new(Cursor::new(&mut buf));
+
+            buffered_transport.write_all(b"He").unwrap();
+            buffered_transport.write_all(b"llo").unwrap();
+            buffered_transport.flush().unwrap();
+
+            buffered_transport.write_all(b" World").unwrap();
+            buffered_transport.flush().unwrap();
+        }
+
+        assert_eq!(b"Hello World", &*buf);
+    }
+
+    /// Test that TBufferedTransport doesn't write data until it flushes.
+    #[test]
+    fn test_buffered_transport_buffers() {
+        let mut buf = Vec::new();
+
+        {
+            let mut buffered_transport = TBufferedTransport::new(Cursor::new(&mut buf));
+
+            buffered_transport.write_all(b"He").unwrap();
+            buffered_transport.write_all(b"llo").unwrap();
+            buffered_transport.flush().unwrap();
+
+            // We write but don't flush.
+            buffered_transport.write_all(b" World").unwrap();
+        }
+
+        assert_eq!(b"Hello", &*buf);
     }
 }

@@ -113,9 +113,9 @@ dependencies = [
 
 [[package]]
 name = "integer-encoding"
-version = "1.1.7"
+version = "3.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48dc51180a9b377fd75814d0cc02199c20f8e99433d6762f650d39cdbbd3b56f"
+checksum = "90c11140ffea82edce8dcd74137ce9324ec24b3cf0175fc9d7e29164da9915b8"
 
 [[package]]
 name = "itertools"
@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "pyo3"
 version = "0.13.2"
-source = "git+https://github.com/erikjohnston/pyo3#672cf622726ac1117386ad98d2c5abf6cd80c8f7"
+source = "git+https://github.com/PyO3/pyo3?branch=main#5446fe2062cb3bf11bf61bd4a2c58a7ed8b408d2"
 dependencies = [
  "cfg-if 1.0.0",
  "indoc",
@@ -277,12 +277,12 @@ dependencies = [
 [[package]]
 name = "pyo3-build-config"
 version = "0.14.0-alpha.0"
-source = "git+https://github.com/erikjohnston/pyo3#672cf622726ac1117386ad98d2c5abf6cd80c8f7"
+source = "git+https://github.com/PyO3/pyo3?branch=main#5446fe2062cb3bf11bf61bd4a2c58a7ed8b408d2"
 
 [[package]]
 name = "pyo3-macros"
 version = "0.13.2"
-source = "git+https://github.com/erikjohnston/pyo3#672cf622726ac1117386ad98d2c5abf6cd80c8f7"
+source = "git+https://github.com/PyO3/pyo3?branch=main#5446fe2062cb3bf11bf61bd4a2c58a7ed8b408d2"
 dependencies = [
  "pyo3-macros-backend",
  "quote",
@@ -292,7 +292,7 @@ dependencies = [
 [[package]]
 name = "pyo3-macros-backend"
 version = "0.13.2"
-source = "git+https://github.com/erikjohnston/pyo3#672cf622726ac1117386ad98d2c5abf6cd80c8f7"
+source = "git+https://github.com/PyO3/pyo3?branch=main#5446fe2062cb3bf11bf61bd4a2c58a7ed8b408d2"
 dependencies = [
  "proc-macro2",
  "pyo3-build-config",
@@ -404,9 +404,8 @@ dependencies = [
 
 [[package]]
 name = "thrift"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6d965454947cc7266d22716ebfd07b18d84ebaf35eec558586bbb2a8cb6b5b"
+version = "0.14.1"
+source = "git+https://github.com/apache/thrift?tag=v0.14.1#f6fa1794539e68ac294038ac388d6bde40a6c237"
 dependencies = [
  "byteorder",
  "integer-encoding",

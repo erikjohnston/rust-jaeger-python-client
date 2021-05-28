@@ -21,7 +21,7 @@ classifier = [
 
 [dependencies]
 ordered-float = "2.2.0"
-thrift = "0.13.0"
+thrift = { git = "https://github.com/apache/thrift", tag = "v0.14.1" }
 try_from = "0.3.2"
 crossbeam-channel = "0.5.1"
 itertools = "0.10.0"
@@ -32,7 +32,7 @@ features = ["extension-module"]
 
 # There's a memory leak in v0.13.2 when using u128's
 [patch.crates-io]
-pyo3 = { git = 'https://github.com/erikjohnston/pyo3' }
+pyo3 = { git = 'https://github.com/PyO3/pyo3', branch = "main" }
 
 [profile.release]
 debug = true

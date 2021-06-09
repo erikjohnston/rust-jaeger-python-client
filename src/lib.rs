@@ -67,7 +67,7 @@ impl PyObjectProtocol for Stats {
 
 /// The main reporter class.
 #[pyclass]
-#[text_signature = "()"]
+#[pyo3(text_signature = "()")]
 struct Reporter {
     span_sender: Sender<thrift_gen::jaeger::Span>,
     process_sender: Sender<thrift_gen::jaeger::Process>,
@@ -179,7 +179,7 @@ impl Reporter {
     }
 
     /// Sets the process information needed to report spans.
-    #[text_signature = "($self, service_name, tags, max_length, /)"]
+    #[pyo3(text_signature = "($self, service_name, tags, max_length, /)")]
     fn set_process(
         self_: PyRef<Self>,
         service_name: String,
@@ -200,7 +200,7 @@ impl Reporter {
     }
 
     /// Queue a span to be reported to local jaeger agent.
-    #[text_signature = "($self, span, /)"]
+    #[pyo3(text_signature = "($self, span, /)")]
     fn report_span(&self, py: Python, py_span: Py<PyAny>) -> PyResult<()> {
         // This may fail if the queue is full. We should probably log something
         // somehow?
@@ -217,7 +217,7 @@ impl Reporter {
         Ok(())
     }
 
-    #[text_signature = "($self, /)"]
+    #[pyo3(text_signature = "($self, /)")]
     fn get_stats(&self) -> Stats {
         let queue_size = self.queue_size.load(Ordering::Relaxed);
         let sent_batches = self.sent_batches.load(Ordering::Relaxed);

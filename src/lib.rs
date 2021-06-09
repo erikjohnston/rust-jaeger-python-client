@@ -423,7 +423,7 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
                         };
 
                     encoded_references.push(thrift_gen::jaeger::SpanRef {
-                        ref_type: ref_type,
+                        ref_type,
                         trace_id_high: ((trace_id >> 64) & ((1 << 64) - 1)) as i64,
                         trace_id_low: (trace_id & ((1 << 64) - 1)) as i64,
                         span_id: context.extract_attribute::<u64>("span_id")? as i64,

@@ -414,7 +414,7 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
                             "follows_from" => thrift_gen::jaeger::SpanRefType::FollowsFrom,
                             "child_of" => thrift_gen::jaeger::SpanRefType::ChildOf,
                             _ => {
-                                print!(
+                                eprintln!(
                                     "rust-python-jaeger-reporter: unknown reference type {}, defaulting to child_of",
                                     python_ref_type,
                                 );

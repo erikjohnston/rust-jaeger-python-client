@@ -409,18 +409,17 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
                     let trace_id: u128 = context.extract_attribute("trace_id")?;
 
                     let python_ref_type = reference.extract_attribute("type")?;
-                    let ref_type: thrift_gen::jaeger::SpanRefType =
-                        match python_ref_type {
-                            "follows_from" => thrift_gen::jaeger::SpanRefType::FollowsFrom,
-                            "child_of" => thrift_gen::jaeger::SpanRefType::ChildOf,
-                            _ => {
-                                eprintln!(
+                    let ref_type: thrift_gen::jaeger::SpanRefType = match python_ref_type {
+                        "follows_from" => thrift_gen::jaeger::SpanRefType::FollowsFrom,
+                        "child_of" => thrift_gen::jaeger::SpanRefType::ChildOf,
+                        _ => {
+                            eprintln!(
                                     "rust-python-jaeger-reporter: unknown reference type {}, defaulting to child_of",
                                     python_ref_type,
                                 );
-                                thrift_gen::jaeger::SpanRefType::ChildOf
-                            }
-                        };
+                            thrift_gen::jaeger::SpanRefType::ChildOf
+                        }
+                    };
 
                     encoded_references.push(thrift_gen::jaeger::SpanRef {
                         ref_type,

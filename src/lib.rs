@@ -1,9 +1,9 @@
 use crossbeam_channel::{bounded, Sender};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
+use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 use pyo3::PyDowncastError;
-use pyo3::{prelude::*, PyObjectProtocol};
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use try_from::TryFrom;
 
@@ -54,8 +54,8 @@ struct Stats {
     last_error: Option<String>,
 }
 
-#[pyproto]
-impl PyObjectProtocol for Stats {
+#[pymethods]
+impl Stats {
     fn __str__(&self) -> String {
         format!("{:?}", self)
     }

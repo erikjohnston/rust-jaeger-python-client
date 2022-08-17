@@ -96,10 +96,6 @@ impl Reporter {
                 .extract()
                 .unwrap_or(6831);
         }
-        println!(
-            "config agent_host_name={} config.agent_port={}",
-            agent_host_name, agent_port
-        );
         // Set up the UDP transport
         let socket = UdpSocket::bind(
             &(49152..65535)

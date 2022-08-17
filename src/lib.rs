@@ -67,7 +67,7 @@ impl Stats {
 
 /// The main reporter class.
 #[pyclass]
-#[pyo3(text_signature = "()")]
+#[pyo3(text_signature = "(config, /)")]
 struct Reporter {
     span_sender: Sender<thrift_gen::jaeger::Span>,
     process_sender: Sender<thrift_gen::jaeger::Process>,
@@ -80,14 +80,33 @@ struct Reporter {
 #[pymethods]
 impl Reporter {
     #[new]
-    fn new() -> PyResult<Reporter> {
+    fn new(config: Option<&PyDict>) -> PyResult<Reporter> {
+        let mut agent_host_name: String = "127.0.0.1".to_string();
+        let mut agent_port: i32 = 6831;
+
+        if let Some(config) = config {
+            agent_host_name = config
+                .get_item("agent_host_name")
+                .unwrap()
+                .extract()
+                .unwrap_or("127.0.0.1".to_string());
+            agent_port = config
+                .get_item("agent_port")
+                .unwrap()
+                .extract()
+                .unwrap_or(6831);
+        }
+        println!(
+            "config agent_host_name={} config.agent_port={}",
+            agent_host_name, agent_port
+        );
         // Set up the UDP transport
         let socket = UdpSocket::bind(
             &(49152..65535)
                 .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
                 .collect::<Vec<_>>()[..],
         )?;
-        socket.connect("127.0.0.1:6831")?;
+        socket.connect(format!("{}:{}", agent_host_name, agent_port))?;
 
         // We never read anything so this can be a no-op input protocol
         let input_protocol = TCompactInputProtocol::new(empty());

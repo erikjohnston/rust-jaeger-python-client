@@ -4,3 +4,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 sdist-include = ["Cargo.lock"]
+
+# Optional Dependencies
+# ---------------------
+objgraph = { version = ">=3.5.0", optional = true }

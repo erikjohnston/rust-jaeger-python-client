@@ -31,7 +31,7 @@ if __name__ == "__main__":
             },
             # 'logging': True,
         },
-        service_name="your-app-name",
+        service_name="rust-jaeger-python-client-test",
     )
 
     tracer = config.create_tracer(reporter, config.sampler)

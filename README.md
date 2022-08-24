@@ -28,7 +28,7 @@ config = Config(
 )
 
 # Create the rust reporter.
-reporter = Reporter()
+reporter = Reporter(config={"agent_host_name": "127.0.0.1", "agent_port": 6831})
 
 # Create the tracer and install it as the global tracer.
 #
@@ -37,12 +37,6 @@ tracer = config.create_tracer(reporter, config.sampler)
 opentracing.set_global_tracer(tracer)
 
 ```
-
-Limitations
------------
-
-The reporter is not configurable and is hardcoded to report to the local agent
-on localhost and the default port.
 
 
 Building

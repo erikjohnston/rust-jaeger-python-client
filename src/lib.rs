@@ -85,16 +85,17 @@ impl Reporter {
         let mut agent_port: i32 = 6831;
 
         if let Some(config) = config {
-            agent_host_name = config
-                .get_item("agent_host_name")
-                .unwrap()
-                .extract()
-                .unwrap_or("127.0.0.1".to_string());
-            agent_port = config
-                .get_item("agent_port")
-                .unwrap()
-                .extract()
-                .unwrap_or(6831);
+            if let Some(agent_host_name_arg) = config.get_item("agent_host_name") {
+                agent_host_name = agent_host_name_arg.extract().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("'agent_host_name' must be an string")
+                })?;
+            }
+
+            if let Some(agent_port_arg) = config.get_item("agent_port") {
+                agent_port = agent_port_arg.extract().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("'agent_port' must be an int")
+                })?;
+            }
         }
         // Set up the UDP transport
         let socket = UdpSocket::bind(

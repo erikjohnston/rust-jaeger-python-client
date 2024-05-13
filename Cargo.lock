@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "rust-python-jaeger-reporter"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "crossbeam-channel",
  "itertools",

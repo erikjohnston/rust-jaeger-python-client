@@ -1,6 +1,6 @@
 [package]
 name = "rust-python-jaeger-reporter"
-version = "0.1.22"
+version = "0.1.23"
 authors = ["Erik Johnston <erik@matrix.org>"]
 edition = "2018"
 description = "A faster reporter for the python `jaeger-client` that reports spans in a native background thread."

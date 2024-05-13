@@ -2,6 +2,7 @@ use crossbeam_channel::{bounded, Sender};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use pyo3::prelude::*;
+use pyo3::pybacked::PyBackedStr;
 use pyo3::types::{PyDict, PyString};
 use pyo3::PyDowncastError;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
@@ -28,7 +29,7 @@ static CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[pymodule]
 /// The root Python module.
-fn rust_python_jaeger_reporter(_py: Python, m: &PyModule) -> PyResult<()> {
+fn rust_python_jaeger_reporter(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Reporter>()?;
     m.add_class::<Stats>()?;
 
@@ -67,7 +68,6 @@ impl Stats {
 
 /// The main reporter class.
 #[pyclass]
-#[pyo3(text_signature = "(config, /)")]
 struct Reporter {
     span_sender: Sender<thrift_gen::jaeger::Span>,
     process_sender: Sender<thrift_gen::jaeger::Process>,
@@ -80,18 +80,18 @@ struct Reporter {
 #[pymethods]
 impl Reporter {
     #[new]
-    fn new(config: Option<&PyDict>) -> PyResult<Reporter> {
+    fn new(config: Option<&Bound<'_, PyDict>>) -> PyResult<Reporter> {
         let mut agent_host_name: String = "127.0.0.1".to_string();
         let mut agent_port: i32 = 6831;
 
         if let Some(config) = config {
-            if let Some(agent_host_name_arg) = config.get_item("agent_host_name") {
+            if let Some(agent_host_name_arg) = config.get_item("agent_host_name")? {
                 agent_host_name = agent_host_name_arg.extract().map_err(|_| {
                     pyo3::exceptions::PyTypeError::new_err("'agent_host_name' must be an string")
                 })?;
             }
 
-            if let Some(agent_port_arg) = config.get_item("agent_port") {
+            if let Some(agent_port_arg) = config.get_item("agent_port")? {
                 agent_port = agent_port_arg.extract().map_err(|_| {
                     pyo3::exceptions::PyTypeError::new_err("'agent_port' must be an int")
                 })?;
@@ -195,11 +195,10 @@ impl Reporter {
     }
 
     /// Sets the process information needed to report spans.
-    #[pyo3(text_signature = "($self, service_name, tags, max_length, /)")]
     fn set_process(
         self_: PyRef<Self>,
         service_name: String,
-        tags: &PyDict,
+        tags: &Bound<'_, PyDict>,
         #[allow(unused_variables)] // Python expects this to exist.
         max_length: i32,
     ) -> PyResult<()> {
@@ -216,24 +215,17 @@ impl Reporter {
     }
 
     /// Queue a span to be reported to local jaeger agent.
-    #[pyo3(text_signature = "($self, span, /)")]
     fn report_span(&self, py: Python, py_span: Py<PyAny>) -> PyResult<()> {
         // This may fail if the queue is full. We should probably log something
         // somehow?
 
-        let span: thrift_gen::jaeger::Span = {
-            let pool = unsafe { py.new_pool() };
-            let py = pool.python();
-
-            py_span.extract(py)?
-        };
+        let span: thrift_gen::jaeger::Span = py_span.extract(py)?;
 
         self.span_sender.try_send(span).ok();
 
         Ok(())
     }
 
-    #[pyo3(text_signature = "($self, /)")]
     fn get_stats(&self) -> Stats {
         let queue_size = self.queue_size.load(Ordering::Relaxed);
         let sent_batches = self.sent_batches.load(Ordering::Relaxed);
@@ -255,7 +247,7 @@ impl Reporter {
 
 /// This is taken from the python jaeger-client class. This is only used by
 /// `set_processs`.
-fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>> {
+fn make_tags(py: Python, dict: &Bound<'_, PyDict>) -> PyResult<Vec<thrift_gen::jaeger::Tag>> {
     let mut tags = Vec::new();
 
     for (key, value) in dict.iter() {
@@ -306,8 +298,8 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
                 v_binary: None,
             });
         } else if value.get_type().name()? == "traceback" {
-            let formatted_traceback =
-                PyString::new(py, "").call_method1("join", (value.call_method0("format")?,))?;
+            let formatted_traceback = PyString::new_bound(py, "")
+                .call_method1("join", (value.call_method0("format")?,))?;
 
             // The python client truncates strings, presumably so that things
             // fit in a UDP packet.
@@ -343,29 +335,6 @@ fn make_tags(py: Python, dict: &PyDict) -> PyResult<Vec<thrift_gen::jaeger::Tag>
     Ok(tags)
 }
 
-/// An extension trait that extracts attributes from a python object. This gives
-/// better error messages than doing `.getattr(..).extract()` as it reports
-/// which attribute we failed to parse.
-trait ExtractAttribute {
-    fn extract_attribute<'a, D>(&'a self, attriubte: &str) -> PyResult<D>
-    where
-        D: FromPyObject<'a>;
-}
-
-impl ExtractAttribute for &PyAny {
-    fn extract_attribute<'a, D>(&'a self, attriubte: &str) -> PyResult<D>
-    where
-        D: FromPyObject<'a>,
-    {
-        FromPyObject::extract(self.getattr(attriubte)?).map_err(|err| {
-            PyErr::new::<pyo3::exceptions::PyTypeError, _>((
-                format!("Failed to extract attribute '{}'", attriubte),
-                err,
-            ))
-        })
-    }
-}
-
 /// A wrapper around a UDP socket that implements Write. `UdpSocket::connect`
 /// must have been called on the socket.
 struct ConnectedUdp {
@@ -397,35 +366,39 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Process {
 }
 
 impl FromPyObject<'_> for thrift_gen::jaeger::Span {
-    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
+    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
         // Annoyingly the jaeger client gives us its own version of Span, rather
         // than the swift version.
         //
         // This is all a bunch of nonesense we've copied from the
         // `jaeger-client` to support large ints.
 
-        let trace_id: u128 = ob.extract_attribute("trace_id")?;
-        let span_id: u128 = ob.extract_attribute("span_id")?;
+        let trace_id: u128 = ob.getattr("trace_id")?.extract()?;
+        let span_id: u128 = ob.getattr("span_id")?.extract()?;
         let parent_span_id = ob
-            .extract_attribute::<Option<u64>>("parent_id")?
+            .getattr("parent_id")?
+            .extract::<Option<u64>>()?
             .unwrap_or_default();
-        let flags = ob.getattr("context")?.extract_attribute("flags")?;
-        let start_time: f64 = ob.extract_attribute("start_time")?;
-        let end_time: f64 = ob.extract_attribute("end_time")?;
+        let flags = ob.getattr("context")?.getattr("flags")?.extract()?;
+        let start_time: f64 = ob.getattr("start_time")?.extract()?;
+        let end_time: f64 = ob.getattr("end_time")?.extract()?;
 
         let trace_id_low = (trace_id & ((1 << 64) - 1)) as i64;
         let trace_id_high = ((trace_id >> 64) & ((1 << 64) - 1)) as i64;
 
-        let references = match ob.extract_attribute::<Option<Vec<&PyAny>>>("references")? {
+        let references = match ob
+            .getattr("references")?
+            .extract::<Option<Vec<Bound<'_, PyAny>>>>()?
+        {
             Some(refs) => {
                 let mut encoded_references = Vec::with_capacity(refs.len());
 
                 for reference in refs {
                     let context = reference.getattr("referenced_context")?;
-                    let trace_id: u128 = context.extract_attribute("trace_id")?;
+                    let trace_id: u128 = context.getattr("trace_id")?.extract()?;
 
-                    let python_ref_type = reference.extract_attribute("type")?;
-                    let ref_type: thrift_gen::jaeger::SpanRefType = match python_ref_type {
+                    let python_ref_type: PyBackedStr = reference.getattr("type")?.extract()?;
+                    let ref_type: thrift_gen::jaeger::SpanRefType = match &*python_ref_type {
                         "follows_from" => thrift_gen::jaeger::SpanRefType::FollowsFrom,
                         "child_of" => thrift_gen::jaeger::SpanRefType::ChildOf,
                         _ => {
@@ -441,7 +414,7 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
                         ref_type,
                         trace_id_high: ((trace_id >> 64) & ((1 << 64) - 1)) as i64,
                         trace_id_low: (trace_id & ((1 << 64) - 1)) as i64,
-                        span_id: context.extract_attribute::<u64>("span_id")? as i64,
+                        span_id: context.getattr("span_id")?.extract::<u64>()? as i64,
                     });
                 }
 
@@ -459,13 +432,13 @@ impl FromPyObject<'_> for thrift_gen::jaeger::Span {
             trace_id_high,
             span_id: span_id as i64, // These converstion from u64 -> i64 do the correct overflow.
             parent_span_id: parent_span_id as i64,
-            operation_name: ob.extract_attribute("operation_name")?,
+            operation_name: ob.getattr("operation_name")?.extract()?,
             references,
             flags,
             start_time: (start_time * 1000000f64) as i64,
             duration: ((end_time - start_time) * 1000000f64) as i64,
-            tags: ob.extract_attribute("tags")?,
-            logs: ob.extract_attribute("logs")?,
+            tags: ob.getattr("tags")?.extract()?,
+            logs: ob.getattr("logs")?.extract()?,
         };
 
         Ok(span)

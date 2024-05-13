@@ -11,11 +11,6 @@ readme = "README.md"
 name = "rust_python_jaeger_reporter"
 crate-type = ["cdylib"]
 
-[package.metadata.maturin]
-requires-python = ">=3.6"
-project-url = { Source = "https://github.com/erikjohnston/rust-jaeger-python-client" }
-classifier = ["Development Status :: 4 - Beta", "Programming Language :: Rust"]
-
 [dependencies]
 ordered-float = "4.2.0"
 thrift = { git = "https://github.com/apache/thrift", tag = "v0.14.1" }

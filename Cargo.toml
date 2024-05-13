@@ -13,18 +13,15 @@ crate-type = ["cdylib"]
 
 [package.metadata.maturin]
 requires-python = ">=3.6"
-project-url = {Source = "https://github.com/erikjohnston/rust-jaeger-python-client"}
-classifier = [
-    "Development Status :: 4 - Beta",
-    "Programming Language :: Rust",
-]
+project-url = { Source = "https://github.com/erikjohnston/rust-jaeger-python-client" }
+classifier = ["Development Status :: 4 - Beta", "Programming Language :: Rust"]
 
 [dependencies]
-ordered-float = "3.0.0"
+ordered-float = "4.2.0"
 thrift = { git = "https://github.com/apache/thrift", tag = "v0.14.1" }
 try_from = "0.3.2"
 crossbeam-channel = "0.5.4"
-itertools = "0.10.3"
+itertools = "0.12.1"
 
 [dependencies.pyo3]
 version = "0.16.5"

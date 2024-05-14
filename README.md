@@ -54,5 +54,5 @@ As per the [maturin docs](https://github.com/PyO3/maturin#manylinux-and-auditwhe
 we use a docker image to build the binary wheels for the various python versions:
 
 ```
-docker run -it --rm -v $(pwd):/io ghcr.io/pyo3/maturin publish
+docker run -it --rm -v $(pwd):/io ghcr.io/pyo3/maturin publish -f
 ```
